@@ -1,13 +1,10 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
 
 use ab_glyph::PxScale;
 use anyhow::Context;
 use clap::Parser;
-use image::{ImageBuffer, Rgb};
-use imageproc::drawing::{draw_text_mut, text_size};
+use image::{imageops::{overlay, rotate90}, ImageBuffer, Rgb};
+use imageproc::{drawing::{draw_line_segment_mut, draw_text_mut}, rect::Rect};
 
 static FONT: &[u8] = include_bytes!("../res/SometypeMono-Regular.ttf");
 
@@ -37,13 +34,13 @@ struct Opts {
     #[clap(long, default_value = "12.0")]
     font_scale: f32,
 
-    #[clap(long, default_value = "16")]
+    #[clap(long, default_value = "60")]
     first_row_height: u32,
 
     #[clap(long, short = 'Y', default_value = "16")]
     row_height: u32,
 
-    #[clap(long, default_value = "60")]
+    #[clap(long, default_value = "80")]
     first_column_width: u32,
 
     #[clap(long, short = 'X', default_value = "60")]
@@ -89,7 +86,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut data: Vec<csv::StringRecord> = Vec::with_capacity(16);
-    let header : csv::StringRecord;
+    let header: csv::StringRecord;
     {
         let mut csvr = csv::Reader::from_reader(std::fs::File::open(input_csv)?);
         header = csvr.headers()?.clone();
@@ -104,7 +101,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let ncols = data[0].len();
-    let nrows = data.len()+1;
+    let nrows = data.len() + 1;
 
     let mut img = ImageBuffer::<Rgb<u8>, _>::new(width, height);
     img.fill(255);
@@ -114,13 +111,26 @@ fn main() -> anyhow::Result<()> {
     let table_width = ncols as u32 * column_width + first_column_width - column_width;
     let table_height = nrows as u32 * row_height + first_row_height - row_height;
 
-    for i in 0..=nrows {
+    let getx = |j: usize| -> u32 {
+        let mut x = MARGIN_LEFT;
+        x += column_width * j as u32;
+        if j >= 1 {
+            x += first_column_width - column_width;
+        }
+        x
+    };
+    let gety = |i: usize| -> u32 {
         let mut y = MARGIN_TOP;
         y += row_height * i as u32;
         if i >= 1 {
             y += first_row_height - row_height;
         }
-        imageproc::drawing::draw_line_segment_mut(
+        y
+    };
+
+    for i in 0..=nrows {
+        let y = gety(i);
+        draw_line_segment_mut(
             &mut img,
             (MARGIN_LEFT as f32, y as f32),
             ((MARGIN_LEFT + table_width) as f32, y as f32),
@@ -128,12 +138,8 @@ fn main() -> anyhow::Result<()> {
         );
     }
     for j in 0..=ncols {
-        let mut x = MARGIN_LEFT;
-        x += column_width * j as u32;
-        if j >= 1 {
-            x += first_column_width - column_width;
-        }
-        imageproc::drawing::draw_line_segment_mut(
+        let x = getx(j);
+        draw_line_segment_mut(
             &mut img,
             (x as f32, MARGIN_TOP as f32),
             (x as f32, (MARGIN_TOP + table_height) as f32),
@@ -143,38 +149,63 @@ fn main() -> anyhow::Result<()> {
 
     for i in 0..nrows {
         for j in 0..ncols {
-            let mut x = MARGIN_LEFT + INTRACELL_MARGIN_LEFT;
-            x += column_width * j as u32;
-            if i >= 1 {
-                x += first_column_width - column_width;
-            }
-
-            let mut y = MARGIN_TOP + INTRACELL_MARGIN_TOP;
-            y += row_height * i as u32;
-            if i >= 1 {
-                y += first_row_height - row_height;
-            }
-
-            let c = getcolour(0.0, 50.0, 30.0);
-
-            let text = if i == 0 {
-                &header[j]
+            let bg_colour = if i == 0 {
+                getcolour(93.0, 0.0, 30.0)
             } else {
-                &data[i-1][j]
+                getcolour(100.0, 0.0, 30.0)
             };
+            let text_colour = getcolour(0.0, 50.0, 30.0);
+            let text = if i == 0 { &header[j] } else { &data[i - 1][j] };
 
-            draw_text_mut(
-                &mut img,
-                c,
-                x as i32,
-                y as i32,
-                PxScale::from(font_scale),
-                &font,
-                text,
-            );
+            let do_rotate = i == 0;
+
+            if !do_rotate {
+                imageproc::drawing::draw_filled_rect_mut(
+                    &mut img,
+                    Rect::at(getx(j) as i32 + 1, gety(i) as i32 + 1)
+                        .of_size(getx(j + 1) - getx(j) - 1, gety(i + 1) - gety(i) - 1),
+                    bg_colour,
+                );
+    
+                let y = gety(i) + INTRACELL_MARGIN_TOP;
+                let x = getx(j) + INTRACELL_MARGIN_LEFT;
+    
+                draw_text_mut(
+                    &mut img,
+                    text_colour,
+                    x as i32,
+                    y as i32,
+                    PxScale::from(font_scale),
+                    &font,
+                    text,
+                );
+            } else {
+                // rotate
+                let subimage_width = gety(i + 1) - gety(i) - 1;
+                let subimage_height = getx(j + 1) - getx(j) - 1;
+
+                let mut cell = ImageBuffer::<Rgb<u8>, _>::new(subimage_width, subimage_height);
+                imageproc::drawing::draw_filled_rect_mut(
+                    &mut cell,
+                    Rect::at(0,0)
+                        .of_size(subimage_width, subimage_height),
+                    bg_colour,
+                );
+                draw_text_mut(
+                    &mut cell,
+                    text_colour,
+                    INTRACELL_MARGIN_TOP as i32,
+                    INTRACELL_MARGIN_LEFT as i32,
+                    PxScale::from(font_scale),
+                    &font,
+                    text,
+                );
+
+                overlay(&mut img, &rotate90(&cell), getx(j) as i64 + 1, gety(i) as i64 + 1);
+            }
+
         }
     }
-
 
     img.save(output_png)?;
 
