@@ -3,8 +3,14 @@ use std::path::PathBuf;
 use ab_glyph::PxScale;
 use anyhow::Context;
 use clap::Parser;
-use image::{imageops::{overlay, rotate90}, ImageBuffer, Rgb};
-use imageproc::{drawing::{draw_line_segment_mut, draw_text_mut}, rect::Rect};
+use image::{
+    imageops::{overlay, rotate270},
+    ImageBuffer, Rgb,
+};
+use imageproc::{
+    drawing::{draw_line_segment_mut, draw_text_mut},
+    rect::Rect,
+};
 
 static FONT: &[u8] = include_bytes!("../res/SometypeMono-Regular.ttf");
 
@@ -149,15 +155,45 @@ fn main() -> anyhow::Result<()> {
 
     for i in 0..nrows {
         for j in 0..ncols {
-            let bg_colour = if i == 0 {
-                getcolour(93.0, 0.0, 30.0)
-            } else {
-                getcolour(100.0, 0.0, 30.0)
-            };
-            let text_colour = getcolour(0.0, 50.0, 30.0);
-            let text = if i == 0 { &header[j] } else { &data[i - 1][j] };
+            let mut text: &str = if i == 0 { &header[j] } else { &data[i - 1][j] };
 
-            let do_rotate = i == 0;
+            let mut do_rotate = false;
+            let mut hue = 0.0;
+            let mut saturation = 0.0;
+            let mut bg_lightness = if i == 0 { 93.0 } else { 100.0 };
+
+            loop {
+                macro_rules! handle_numeric_prefix {
+                    ($var:ident, $t:ident) => {
+                        let Some((v, rest)) = $t.split_once(':') else {
+                            text = $t;
+                            break;
+                        };
+                        let Ok(v): Result<f32,_> = v.parse() else {
+                            text = $t;
+                            break;
+                        };
+                        $var=v;
+                        text = rest;
+                    }
+                }
+                if let Some(t) = text.strip_prefix("rot:") {
+                    do_rotate = true;
+                    text = t;
+                } else if let Some(t) = text.strip_prefix("h=") {
+                    handle_numeric_prefix!(hue, t);
+                } else if let Some(t) = text.strip_prefix("s=") {
+                    handle_numeric_prefix!(saturation, t);
+                } else if let Some(t) = text.strip_prefix("l=") {
+                    handle_numeric_prefix!(bg_lightness, t);
+                } else {
+                    break;
+                }
+            }
+
+            let bg_colour = getcolour(bg_lightness, saturation, hue);
+            let fg_lightness = if bg_lightness < 65.0 { 100.0 } else { 0.0 };
+            let text_colour = getcolour(fg_lightness, 0.0, 0.0);
 
             if !do_rotate {
                 imageproc::drawing::draw_filled_rect_mut(
@@ -166,10 +202,10 @@ fn main() -> anyhow::Result<()> {
                         .of_size(getx(j + 1) - getx(j) - 1, gety(i + 1) - gety(i) - 1),
                     bg_colour,
                 );
-    
+
                 let y = gety(i) + INTRACELL_MARGIN_TOP;
                 let x = getx(j) + INTRACELL_MARGIN_LEFT;
-    
+
                 draw_text_mut(
                     &mut img,
                     text_colour,
@@ -187,8 +223,7 @@ fn main() -> anyhow::Result<()> {
                 let mut cell = ImageBuffer::<Rgb<u8>, _>::new(subimage_width, subimage_height);
                 imageproc::drawing::draw_filled_rect_mut(
                     &mut cell,
-                    Rect::at(0,0)
-                        .of_size(subimage_width, subimage_height),
+                    Rect::at(0, 0).of_size(subimage_width, subimage_height),
                     bg_colour,
                 );
                 draw_text_mut(
@@ -201,9 +236,13 @@ fn main() -> anyhow::Result<()> {
                     text,
                 );
 
-                overlay(&mut img, &rotate90(&cell), getx(j) as i64 + 1, gety(i) as i64 + 1);
+                overlay(
+                    &mut img,
+                    &rotate270(&cell),
+                    getx(j) as i64 + 1,
+                    gety(i) as i64 + 1,
+                );
             }
-
         }
     }
 
