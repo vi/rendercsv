@@ -35,21 +35,20 @@ struct Opts {
     #[clap(long)]
     font: Option<PathBuf>,
 
-    /// font scale to render legend text. Default is 14.
-    /// Setting it to 0 prevents rendering legend.
-    #[clap(long, default_value = "12.0")]
+    /// Text size
+    #[clap(long, short='s', default_value = "12.0")]
     font_scale: f32,
 
-    #[clap(long, default_value = "60")]
+    #[clap(long, short='Y', default_value = "60")]
     first_row_height: u32,
 
-    #[clap(long, short = 'Y', default_value = "16")]
+    #[clap(long, short = 'y', default_value = "16")]
     row_height: u32,
 
-    #[clap(long, default_value = "80")]
+    #[clap(long, short='X', default_value = "80")]
     first_column_width: u32,
 
-    #[clap(long, short = 'X', default_value = "60")]
+    #[clap(long, short = 'x', default_value = "60")]
     column_width: u32,
 }
 
